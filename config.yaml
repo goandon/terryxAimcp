@@ -1,0 +1,6 @@
+xai:
+  api_key: ""  # or XAI_API_KEY env var
+
+output:
+  image_dir: ""  # or XAI_IMAGE_OUTPUT_DIR env var (default: ~/xai_output/images)
+  video_dir: ""  # or XAI_VIDEO_OUTPUT_DIR env var (default: ~/xai_output/videos)

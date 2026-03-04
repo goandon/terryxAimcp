@@ -96,12 +96,18 @@ async def xai_generate_image(
     aspect_ratio: Optional[str] = None,
     resolution: Optional[str] = None,
     response_format: str = "url",
+    image_url: Optional[str] = None,
+    image_local_path: Optional[str] = None,
     output_dir: Optional[str] = None,
 ) -> str:
     """Generate images from text using xAI grok-imagine-image.
 
     Generated images are automatically downloaded and saved to disk.
     Temporary URLs from xAI expire quickly, so images are always saved locally.
+
+    Optionally provide a single reference image for guided generation or style transfer
+    via the /v1/images/generations endpoint. For multiple reference images (up to 3),
+    use xai_edit_image instead.
 
     Args:
         prompt: Text description of the desired image.
@@ -111,14 +117,23 @@ async def xai_generate_image(
         resolution: Output resolution (e.g., "2k"). Omit for default.
         response_format: API response format - "url" (default) or "b64_json".
             Both are saved locally regardless of format.
+        image_url: Optional reference image URL for guided generation or style transfer.
+        image_local_path: Optional local file path to reference image (auto-encodes).
         output_dir: Directory to save images. Default: ~/xai_output/images.
     """
+    # Resolve local path to data URI
+    resolved_url = image_url
+    if image_local_path and not resolved_url:
+        b64, mime = encode_image_base64(image_local_path)
+        resolved_url = f"data:{mime};base64,{b64}"
+
     result = await _get_xai().generate_image(
         prompt=prompt,
         n=n,
         aspect_ratio=aspect_ratio,
         resolution=resolution,
         response_format=response_format,
+        image_url=resolved_url,
     )
 
     # Auto-save images to disk
@@ -149,53 +164,87 @@ async def xai_edit_image(
     image_local_path: Optional[str] = None,
     image_base64: Optional[str] = None,
     image_mime_type: str = "image/jpeg",
+    image_urls: Optional[list[str]] = None,
+    image_local_paths: Optional[list[str]] = None,
     n: int = 1,
     aspect_ratio: Optional[str] = None,
     resolution: Optional[str] = None,
     response_format: str = "url",
     output_dir: Optional[str] = None,
 ) -> str:
-    """Edit or transform an image using xAI grok-imagine-image with a reference image.
+    """Edit or create images using xAI with up to 3 reference images.
 
-    Provide a reference image via URL, local file path, or base64 data.
-    The API accepts exactly 1 reference image.
+    Uses /v1/images/edits endpoint which supports multiple reference images.
+    Can be used for editing, style transfer, compositing, and reference-guided
+    generation (creating new images using references as character/style guide).
 
-    Use cases: style transfer, image editing, multi-turn editing (chain results back).
+    Provide reference images via any combination of:
+    - image_url / image_urls: Public URLs or data URIs
+    - image_local_path / image_local_paths: Local file paths (auto-encoded)
+    - image_base64: Raw base64 data (single image only)
+
+    Single-image params (image_url, image_local_path, image_base64) and
+    multi-image params (image_urls, image_local_paths) are merged. Max 3 total.
 
     Args:
-        prompt: Editing instruction or style description.
-        image_url: Public URL of the reference image.
-        image_local_path: Local file path to reference image (auto-encodes to base64 data URI).
-        image_base64: Raw base64-encoded image data.
-        image_mime_type: MIME type when using image_base64 ("image/jpeg" or "image/png").
+        prompt: Editing instruction, style description, or generation prompt.
+        image_url: Single reference image URL.
+        image_local_path: Single local file path (auto-encodes to data URI).
+        image_base64: Single raw base64-encoded image data.
+        image_mime_type: MIME type for image_base64 ("image/jpeg" or "image/png").
+        image_urls: List of reference image URLs (max 3).
+        image_local_paths: List of local file paths (auto-encoded, max 3).
         n: Number of output images (1-10, default: 1).
         aspect_ratio: Output aspect ratio.
         resolution: Output resolution (e.g., "2k").
         response_format: "url" (default) or "b64_json".
         output_dir: Directory to save output images.
     """
-    # Resolve image input to URL or data URI
-    resolved_url = image_url
-    if image_local_path and not resolved_url:
-        b64, mime = encode_image_base64(image_local_path)
-        resolved_url = f"data:{mime};base64,{b64}"
-    elif image_base64 and not resolved_url:
-        resolved_url = f"data:{image_mime_type};base64,{image_base64}"
+    # Collect all reference image URLs
+    resolved_urls: list[str] = []
 
-    if not resolved_url:
+    # Multi-image params first
+    if image_urls:
+        resolved_urls.extend(image_urls)
+    if image_local_paths:
+        for path in image_local_paths:
+            b64, mime = encode_image_base64(path)
+            resolved_urls.append(f"data:{mime};base64,{b64}")
+
+    # Single-image params (append if not already covered)
+    if image_url and image_url not in resolved_urls:
+        resolved_urls.append(image_url)
+    if image_local_path:
+        b64, mime = encode_image_base64(image_local_path)
+        data_uri = f"data:{mime};base64,{b64}"
+        resolved_urls.append(data_uri)
+    if image_base64 and not image_url and not image_local_path:
+        resolved_urls.append(f"data:{image_mime_type};base64,{image_base64}")
+
+    if not resolved_urls:
         return json.dumps({
             "provider": "xai",
             "status": "error",
-            "error": "No reference image provided. Use image_url, image_local_path, or image_base64.",
+            "error": (
+                "No reference image provided. Use image_url, image_local_path, "
+                "image_base64, image_urls, or image_local_paths."
+            ),
         }, ensure_ascii=False, indent=2)
 
-    result = await _get_xai().generate_image(
+    if len(resolved_urls) > 3:
+        return json.dumps({
+            "provider": "xai",
+            "status": "error",
+            "error": f"Too many reference images ({len(resolved_urls)}). Max 3 allowed.",
+        }, ensure_ascii=False, indent=2)
+
+    result = await _get_xai().edit_image(
         prompt=prompt,
+        image_urls=resolved_urls,
         n=n,
         aspect_ratio=aspect_ratio,
         resolution=resolution,
         response_format=response_format,
-        image_url=resolved_url,
     )
 
     # Auto-save images
@@ -473,7 +522,10 @@ async def xai_list_models() -> str:
         "image": {
             "model_id": "grok-imagine-image",
             "name": "Grok Imagine Image",
-            "endpoint": "POST /v1/images/generations",
+            "endpoints": {
+                "generate": "POST /v1/images/generations (text-to-image, single reference)",
+                "edit": "POST /v1/images/edits (multi-reference editing/guided generation)",
+            },
             "type": "synchronous",
             "capabilities": [
                 "text-to-image",
@@ -481,20 +533,24 @@ async def xai_list_models() -> str:
                 "style-transfer",
                 "multi-turn-editing",
                 "batch-generation",
+                "reference-guided-generation",
+                "multi-image-compositing",
             ],
             "parameters": {
                 "n": "1-10 images per request",
                 "aspect_ratio": "1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 2:1, 1:2, auto",
                 "resolution": "default or 2k",
                 "response_format": "url or b64_json",
-                "image_url": "Single reference image for editing (URL or data URI)",
+                "image_url": "Single reference (generate endpoint)",
+                "image_urls": "Up to 3 references (edit endpoint)",
             },
             "pricing": "~$0.07 per image (flat rate)",
             "notes": [
                 "NEVER use grok-2-image (banned). Always use grok-imagine-image.",
                 "Generated URLs are temporary - download immediately.",
-                "API accepts only 1 reference image via image_url.",
-                "For multiple characters: create a collage first, then reference positions in prompt.",
+                "xai_generate_image: /v1/images/generations — 0 or 1 reference image.",
+                "xai_edit_image: /v1/images/edits — up to 3 reference images.",
+                "Edit endpoint supports reference-guided generation (not just editing).",
             ],
         },
         "video": {

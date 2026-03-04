@@ -2,7 +2,7 @@
 
 Unified MCP server for xAI image and video generation.
 
-- **Image**: `grok-imagine-image` — text-to-image, image editing, style transfer
+- **Image**: `grok-imagine-image` — text-to-image, multi-reference editing, reference-guided generation
 - **Video**: `grok-imagine-video` — text-to-video, image-to-video, video editing
 
 Cross-platform: Windows, macOS, Linux.
@@ -110,8 +110,8 @@ Point it to `server.py` with the environment variables above.
 
 | Tool | Description |
 |------|-------------|
-| `xai_generate_image` | Text-to-image generation (1-10 images, various aspect ratios) |
-| `xai_edit_image` | Image editing with reference image (URL, local path, or base64) |
+| `xai_generate_image` | Text-to-image generation with optional single reference image |
+| `xai_edit_image` | Multi-reference editing and guided generation (up to 3 images) |
 | `xai_list_images` | List recently generated images with metadata |
 
 ### Video Tools
@@ -140,11 +140,19 @@ prompt: "A serene mountain landscape at sunset with warm amber tones"
 aspect_ratio: "16:9"
 ```
 
-### Edit an image with reference
+### Generate with single reference
 
 ```
-prompt: "Transform to watercolor painting style"
-image_local_path: "/path/to/photo.jpg"
+prompt: "A portrait of this person at a beach, warm sunset lighting"
+image_local_path: "/path/to/character.jpg"
+```
+
+### Edit with multiple references (up to 3)
+
+```
+prompt: "Create a new image of the person from these references sitting in a cafe"
+image_local_paths: ["/path/to/face.jpg", "/path/to/full_body.jpg"]
+aspect_ratio: "3:4"
 ```
 
 ### Generate a video with dialogue
@@ -175,7 +183,7 @@ duration: 10
 
 ## API Reference
 
-### Image API (`grok-imagine-image`)
+### Image Generation API (`/v1/images/generations`)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -183,11 +191,22 @@ duration: 10
 | `n` | int | Number of images (1-10, default: 1) |
 | `aspect_ratio` | string | `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `3:2`, `2:3`, `2:1`, `1:2`, `auto` |
 | `resolution` | string | `"2k"` or omit for default |
-| `image_url` | string | Reference image for editing (1 image only, URL or data URI) |
+| `image_url` | string | Optional single reference image (URL or data URI) |
 
-- Synchronous API — results returned immediately
+### Image Editing API (`/v1/images/edits`)
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `prompt` | string | **Required.** Editing instruction or generation prompt |
+| `n` | int | Number of images (1-10, default: 1) |
+| `images` | array | Up to 3 reference images (`{url, type: "image_url"}`) |
+| `aspect_ratio` | string | Same options as generation API |
+| `resolution` | string | `"2k"` or omit for default |
+
+- Both endpoints are synchronous — results returned immediately
 - Cost: ~$0.07 per image (flat rate)
 - **Important**: Always use `grok-imagine-image`. Do NOT use `grok-2-image`.
+- Edit endpoint supports **reference-guided generation** — not just editing
 
 ### Video API (`grok-imagine-video`)
 
@@ -207,7 +226,8 @@ duration: 10
 ## Important Notes
 
 - Generated image/video URLs are **temporary** — they are auto-saved locally by default.
-- Image API accepts only 1 reference image. For multiple characters, create a collage first.
+- `xai_generate_image` accepts 0 or 1 reference image via `/v1/images/generations`.
+- `xai_edit_image` accepts up to 3 reference images via `/v1/images/edits`.
 - Video URLs should be downloaded promptly before they expire.
 
 ## License

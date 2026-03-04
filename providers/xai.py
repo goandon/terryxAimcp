@@ -21,6 +21,7 @@ from models.schemas import (
     ImageGenerationResult,
     ImageResult,
     VideoGenerationResult,
+    XaiImageEditRequest,
     XaiImageModel,
     XaiImageRequest,
     XaiVideoEditRequest,
@@ -149,6 +150,61 @@ class XaiProvider:
                 result.error = err.get("message", str(err)) if isinstance(err, dict) else str(err)
 
         return result
+
+    # ==================================================================
+    # IMAGE EDITING (multi-reference)
+    # ==================================================================
+
+    async def edit_image(
+        self,
+        prompt: str,
+        image_urls: list[str],
+        n: int = 1,
+        aspect_ratio: Optional[str] = None,
+        resolution: Optional[str] = None,
+        response_format: str = "url",
+    ) -> ImageGenerationResult:
+        """Edit or create images using up to 3 reference images.
+
+        Uses the /v1/images/edits endpoint which supports multiple references.
+        Can be used for editing, compositing, and reference-guided generation.
+
+        Args:
+            prompt: Editing instruction or generation description.
+            image_urls: List of reference image URLs (max 3). Supports
+                public URLs and data URIs (base64).
+            n: Number of output images (1-10).
+            aspect_ratio: Output aspect ratio.
+            resolution: Output resolution (e.g., "2k").
+            response_format: "url" or "b64_json".
+        """
+        if len(image_urls) > 3:
+            raise ValueError("xAI /v1/images/edits supports at most 3 reference images")
+
+        req = XaiImageEditRequest(
+            prompt=prompt,
+            n=n,
+            image_urls=image_urls,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            response_format=response_format,
+        )
+        body = req.to_api_body()
+        url = f"{_XAI_BASE}/images/edits"
+
+        logger.info(
+            "xAI edit_image -> n=%d, refs=%d, aspect_ratio=%s",
+            n, len(image_urls), aspect_ratio,
+        )
+        logger.debug("Request body keys: %s", list(body.keys()))
+
+        resp = await self._client.post(url, json=body, headers=self._headers())
+        resp.raise_for_status()
+        data = resp.json()
+
+        logger.debug("xAI edit response keys: %s", list(data.keys()))
+
+        return self._parse_image_response(data)
 
     # ==================================================================
     # VIDEO GENERATION

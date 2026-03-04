@@ -52,7 +52,7 @@ class VideoAspectRatio(str, Enum):
 
 @dataclass
 class XaiImageRequest:
-    """xAI image generation request (text-to-image or image editing).
+    """xAI image generation request (text-to-image or single-image editing).
 
     API endpoint: POST https://api.x.ai/v1/images/generations
     Model: grok-imagine-image (NEVER use grok-2-image)
@@ -81,6 +81,43 @@ class XaiImageRequest:
             d["resolution"] = self.resolution
         if self.image_url:
             d["image_url"] = self.image_url
+        return d
+
+
+@dataclass
+class XaiImageEditRequest:
+    """xAI image editing request with multiple reference images.
+
+    API endpoint: POST https://api.x.ai/v1/images/edits
+    Model: grok-imagine-image
+
+    Supports up to 3 reference images via image_urls.
+    Can be used for editing, style transfer, compositing, and
+    reference-guided generation (creating new images using references as guide).
+    """
+    prompt: str = ""
+    model: str = XaiImageModel.GROK_IMAGINE_IMAGE.value
+    n: int = 1
+    image_urls: list[str] = field(default_factory=list)
+    aspect_ratio: Optional[str] = None
+    resolution: Optional[str] = None
+    response_format: str = "url"
+
+    def to_api_body(self) -> dict:
+        d: dict = {
+            "model": self.model,
+            "prompt": self.prompt,
+            "n": self.n,
+            "response_format": self.response_format,
+        }
+        if self.aspect_ratio:
+            d["aspect_ratio"] = self.aspect_ratio
+        if self.resolution:
+            d["resolution"] = self.resolution
+        if self.image_urls:
+            d["images"] = [
+                {"url": url, "type": "image_url"} for url in self.image_urls
+            ]
         return d
 
 
